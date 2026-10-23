@@ -56,17 +56,44 @@ episodes=items.map((it,i)=>{const title=directText(it,'title')||'(Tanpa judul)';
 function date(e){if(!e.pubDate)return'Tanggal tidak tersedia';return e.dateMs?new Intl.DateTimeFormat('id-ID',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}).format(new Date(e.dateMs))+' UTC':e.pubDate}
 function render(){const q=$('search').value.trim().toLowerCase();let list=episodes.filter(e=>(showDone||!doneIds.has(episodeKey(e)))&&(!q||[e.title,e.desc,e.pubDate,e.audio,e.guid].join(' ').toLowerCase().includes(q)));const s=$('sort').value;if(s==='newest')list.sort((a,b)=>b.dateMs-a.dateMs||b.index-a.index);if(s==='oldest')list.sort((a,b)=>a.dateMs-b.dateMs||a.index-b.index);if(s==='title')list.sort((a,b)=>a.title.localeCompare(b.title));if(s==='rss')list.sort((a,b)=>a.index-b.index);const root=$('episodeList');if(!list.length){root.innerHTML='<div class="empty">Tidak ada episode yang cocok.</div>';return}root.innerHTML=list.map(e=>`<article class="ep">${e.image?`<img class="cover" src="${esc(e.image)}" alt="Gambar episode" loading="lazy" onerror="this.outerHTML='<div class=&quot;placeholder&quot;>♫</div>'">`:'<div class="placeholder">♫</div>'}<div><h3>${esc(e.title)}</h3><div class="meta"><span>#${e.index}</span><span>${esc(date(e))}</span>${e.duration?`<span>Durasi ${esc(e.duration)}</span>`:''}</div><div class="desc clamp" id="desc-${e.index}">${e.descHtml?sanitizeDescription(e.descHtml):esc(e.desc||'Deskripsi tidak tersedia di RSS.')}</div>${e.audio?`<div class="url">MP3: ${esc(e.audio)}</div>`:'<div class="url">URL MP3 tidak ditemukan.</div>'}${e.image?`<div class="url">Gambar: ${esc(e.image)}</div>`:''}<div class="actions"><button class="btn" data-act="title" data-id="${e.index}">Copy judul</button><button class="btn" data-act="desc" data-id="${e.index}">Copy deskripsi HTML</button><button class="btn" data-act="both" data-id="${e.index}">Copy judul + deskripsi</button>${e.audio?`<button class="btn primary" data-act="audio" data-id="${e.index}">Download MP3</button><a class="btn" href="${esc(e.audio)}" target="_blank" rel="noopener">Buka MP3</a>`:''}${e.image?`<button class="btn cyan" data-act="image" data-id="${e.index}">Download gambar</button><a class="btn" href="${esc(e.image)}" target="_blank" rel="noopener">Buka gambar</a>`:''}${e.desc?`<button class="btn" data-act="toggle" data-id="${e.index}">Lihat deskripsi penuh</button>`:''}<button class="btn primary" data-act="done" data-id="${e.index}">Sudah disalin ✓</button></div></div></article>`).join('');refreshDoneCount()}
 async function copy(s){try{await navigator.clipboard.writeText(s);status('Berhasil disalin ke clipboard.','ok')}catch(e){const t=document.createElement('textarea');t.value=s;document.body.appendChild(t);t.select();const ok=document.execCommand('copy');t.remove();status(ok?'Berhasil disalin.':'Clipboard diblokir browser.',ok?'ok':'err')}}
+async function copyRichHtml(html, plain){
+  // Preferred path: write real HTML clipboard data, not the markup as plain text.
+  try{
+    if(navigator.clipboard && window.ClipboardItem && window.isSecureContext){
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':new Blob([html],{type:'text/html'}),
+        'text/plain':new Blob([plain||stripHtml(html)],{type:'text/plain'})
+      })]);
+      return true;
+    }
+  }catch(err){}
+  // Compatibility fallback: select rendered DOM so execCommand copies rich HTML.
+  let box,range,selection;
+  try{
+    box=document.createElement('div');
+    box.contentEditable='true';
+    box.setAttribute('aria-hidden','true');
+    box.style.cssText='position:fixed;left:-10000px;top:0;width:800px;opacity:0;pointer-events:none;';
+    box.innerHTML=html;
+    document.body.appendChild(box);
+    range=document.createRange();range.selectNodeContents(box);
+    selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+    box.focus();
+    const ok=document.execCommand('copy');
+    selection.removeAllRanges();box.remove();
+    if(ok)return true;
+  }catch(err){
+    try{if(selection)selection.removeAllRanges();if(box)box.remove()}catch(e){}
+  }
+  // Last fallback is readable text rather than raw <p>/<a> source.
+  await copy(plain||stripHtml(html));
+  return false;
+}
 async function copyDescription(e){
   const safeHtml=sanitizeDescription(e.descHtml||esc(e.desc||''));
   const plain=e.desc||stripHtml(safeHtml);
-  try{
-    if(navigator.clipboard && window.ClipboardItem){
-      await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([safeHtml],{type:'text/html'}),'text/plain':new Blob([plain],{type:'text/plain'})})]);
-      status('Deskripsi disalin dengan format HTML dan tautan.','ok');return;
-    }
-  }catch(err){}
-  await copy(e.descHtml||e.desc||'');
-  status('HTML deskripsi disalin sebagai kode sumber. Jika tautan tidak ikut terbawa saat paste, gunakan tombol Copy deskripsi HTML di browser yang mendukung rich clipboard.','');
+  const ok=await copyRichHtml(safeHtml,plain);
+  status(ok?'Deskripsi disalin sebagai konten berformat HTML, termasuk paragraf dan tautan.':'Browser tidak mendukung rich clipboard; teks deskripsi disalin tanpa kode HTML mentah.',''+(ok?'ok':''));
 }
 async function download(u,name){status('Mencoba mengunduh file...');try{const r=await fetch(u,{mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const b=await r.blob(),o=URL.createObjectURL(b),a=document.createElement('a');a.href=o;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(o),15000);status('Unduhan dimulai: '+name,'ok')}catch(e){window.open(u,'_blank','noopener');status('Unduh langsung diblokir oleh server/CORS. File dibuka di tab baru; gunakan Save audio/image as.','')}}
 $('parseBtn').onclick=()=>{try{parse($('xmlInput').value)}catch(e){status(e.message,'err')}};
@@ -76,7 +103,7 @@ $('clearBtn').onclick=()=>{episodes=[];$('xmlInput').value='';$('rssUrl').value=
 $('search').oninput=render;$('sort').onchange=render;
 $('showDone').onclick=()=>{showDone=!showDone;$('showDone').textContent=showDone?'Sembunyikan yang selesai':'Tampilkan yang disembunyikan';render()};
 $('clearDone').onclick=()=>{if(!confirm('Hapus semua tanda selesai? Episode yang ditandai akan muncul lagi.'))return;doneIds.clear();saveDone();showDone=false;$('showDone').textContent='Tampilkan yang disembunyikan';render();status('Semua tanda selesai direset.','ok')};
-$('episodeList').onclick=async ev=>{const b=ev.target.closest('button[data-act]');if(!b)return;const e=episodes.find(x=>x.index===+b.dataset.id);if(!e)return;const safe=(e.title||'episode').replace(/[\\/:*?"<>|]+/g,'_').slice(0,90);switch(b.dataset.act){case'title':return copy(e.title);case'desc':return copyDescription(e);case'both':return copy(e.title+'\n\n'+(e.descHtml||e.desc));case'audio':return download(e.audio,safe+'.mp3');case'image':return download(e.image,safe+'.jpg');case'done':doneIds.add(episodeKey(e));saveDone();render();status('Episode ditandai sudah disalin dan disembunyikan agar tidak terambil dua kali.','ok');return;case'toggle':{const d=$('desc-'+e.index),on=d.dataset.open==='1';d.dataset.open=on?'0':'1';d.classList.toggle('clamp',on);b.textContent=on?'Lihat deskripsi penuh':'Ringkas deskripsi';}}};
+$('episodeList').onclick=async ev=>{const b=ev.target.closest('button[data-act]');if(!b)return;const e=episodes.find(x=>x.index===+b.dataset.id);if(!e)return;const safe=(e.title||'episode').replace(/[\\/:*?"<>|]+/g,'_').slice(0,90);switch(b.dataset.act){case'title':return copy(e.title);case'desc':return copyDescription(e);case'both':return copyRichHtml('<p>'+esc(e.title)+'</p>'+sanitizeDescription(e.descHtml||esc(e.desc||'')),e.title+'\n\n'+(e.desc||stripHtml(e.descHtml||''))).then(ok=>status(ok?'Judul dan deskripsi disalin dengan format HTML.':'Judul dan deskripsi disalin sebagai teks biasa.',''+(ok?'ok':'')));case'audio':return download(e.audio,safe+'.mp3');case'image':return download(e.image,safe+'.jpg');case'done':doneIds.add(episodeKey(e));saveDone();render();status('Episode ditandai sudah disalin dan disembunyikan agar tidak terambil dua kali.','ok');return;case'toggle':{const d=$('desc-'+e.index),on=d.dataset.open==='1';d.dataset.open=on?'0':'1';d.classList.toggle('clamp',on);b.textContent=on?'Lihat deskripsi penuh':'Ringkas deskripsi';}}};
 $('copyVisible').onclick=()=>{const q=$('search').value.trim().toLowerCase(),list=episodes.filter(e=>!q||[e.title,e.desc,e.pubDate,e.audio,e.guid].join(' ').toLowerCase().includes(q));copy(list.map(e=>`${e.title}\n${e.audio||'(URL MP3 tidak ada)'}`).join('\n\n'))};
 $('exportBtn').onclick=()=>{const rows=[['title','descriptionPlainText','descriptionHTML','pubDate','audioUrl','imageUrl','guid','duration','mimeType','enclosureLength'],...episodes.map(e=>[e.title,e.desc,e.descHtml,e.pubDate,e.audio,e.image,e.guid,e.duration,e.mime,e.length])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='rss-episodes.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
 })();
