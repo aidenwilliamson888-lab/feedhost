@@ -12,10 +12,10 @@
 <div class="row" style="margin-top:10px"><button class="btn primary" id="parseBtn">Parse RSS XML</button><button class="btn" id="clearBtn">Reset</button><button class="btn cyan" id="exportBtn" disabled>Export CSV</button></div>
 <div id="status" class="status">Belum ada RSS yang diproses. Jika URL tidak bisa diambil karena CORS, download file RSS XML lalu pilih file atau paste isinya.</div></section>
 <div id="results" class="hidden"><div class="stats"><div class="stat"><strong id="countAll">0</strong><span>Total episode</span></div><div class="stat"><strong id="countMp3">0</strong><span>Punya URL audio</span></div><div class="stat"><strong id="countImage">0</strong><span>Punya gambar</span></div><div class="stat"><strong id="countDate">0</strong><span>Punya tanggal</span></div></div>
-<section class="panel"><h2>2. Daftar episode</h2><div class="tools"><span id="doneCount" class="sub">0 ditandai selesai</span><button class="btn" id="showDone">Tampilkan yang disembunyikan</button><button class="btn" id="clearDone">Reset tanda selesai</button><input id="search" class="search" type="search" placeholder="Cari judul, deskripsi, tanggal..."><select id="sort"><option value="newest">Tanggal: terbaru dulu</option><option value="oldest">Tanggal: terlama dulu</option><option value="rss">Urutan di RSS</option><option value="title">Judul A–Z</option></select><button class="btn" id="copyVisible">Copy judul + URL MP3</button></div><div class="sub">Jika unduhan langsung diblokir CORS/hotlink, file akan dibuka di tab baru. Simpan melalui menu browser.</div><div id="episodeList"></div></section></div>
+<section class="panel"><h2>2. Daftar episode</h2><div class="tools"><span id="doneCount" class="sub">0 ditandai selesai</span><button class="btn" id="showDone">Tampilkan yang disembunyikan</button><button class="btn" id="clearDone">Reset tanda selesai</button><input id="search" class="search" type="search" placeholder="Cari judul, deskripsi, tanggal..."><select id="sort"><option value="newest">Tanggal: terbaru dulu</option><option value="oldest">Tanggal: terlama dulu</option><option value="rss">Urutan di RSS</option><option value="title">Judul A–Z</option></select><button class="btn" id="copyVisible">Copy judul + URL MP3</button></div><div class="row" style="margin:10px 0"><button class="btn primary" id="pickFolder">Pilih folder Downloads</button><span id="folderState" class="sub">Pilih folder Downloads sekali agar tool bisa membuat subfolder mp3 dan gambar secara otomatis (Chrome/Edge desktop).</span></div><div class="sub">Jika folder tujuan dipilih, file disimpan ke mp3/1.mp3, mp3/2.mp3, dan gambar/1.jpg, gambar/2.jpg, mengikuti nomor episode di RSS. Jika tidak memilih folder, browser mengunduh file ke lokasi Downloads default.</div><div id="episodeList"></div></section></div>
 <footer>Diproses lokal di browser · Tidak mengunggah RSS ke server</footer></main>
 <script>
-(()=>{'use strict';const $=id=>document.getElementById(id);let episodes=[];
+(()=>{'use strict';const $=id=>document.getElementById(id);let episodes=[];let downloadRootHandle=null;
 function status(s,t=''){const e=$('status');e.className='status'+(t?' '+t:'');e.textContent=s}
 function descendants(node,names){return [...node.getElementsByTagName('*')].filter(x=>names.includes((x.localName||x.nodeName.split(':').pop()).toLowerCase()))}
 function tagText(node,names){for(const x of descendants(node,names)){const v=(x.textContent||'').trim();if(v)return v}return ''}
@@ -100,7 +100,30 @@ async function copyDescription(e){
   const ok=await copy(htmlSource);
   if(ok===undefined)status('Kode HTML deskripsi disalin, termasuk tag paragraf, link, target, dan rel.','ok');
 }
-async function download(u,name){status('Mencoba mengunduh file...');try{const r=await fetch(u,{mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const b=await r.blob(),o=URL.createObjectURL(b),a=document.createElement('a');a.href=o;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(o),15000);status('Unduhan dimulai: '+name,'ok')}catch(e){window.open(u,'_blank','noopener');status('Unduh langsung diblokir oleh server/CORS. File dibuka di tab baru; gunakan Save audio/image as.','')}}
+async function download(u,kind,index){
+  const isAudio=kind==='mp3', folderName=isAudio?'mp3':'gambar', filename=`${index}.${isAudio?'mp3':'jpg'}`;
+  status('Mengunduh '+folderName+'/'+filename+'...');
+  try{
+    const r=await fetch(u,{mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const blob=await r.blob();
+    if(downloadRootHandle){
+      const dir=await downloadRootHandle.getDirectoryHandle(folderName,{create:true});
+      const file=await dir.getFileHandle(filename,{create:true});
+      const writable=await file.createWritable();await writable.write(blob);await writable.close();
+      status('Berhasil disimpan: '+folderName+'/'+filename,'ok');return;
+    }
+    const objectUrl=URL.createObjectURL(blob),a=document.createElement('a');a.href=objectUrl;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),30000);
+    status('Unduhan dimulai: '+filename+'. Untuk menyimpan otomatis ke subfolder mp3/gambar, klik Pilih folder Downloads terlebih dahulu.','ok');
+  }catch(err){
+    if(downloadRootHandle){status('Gagal menyimpan ke folder pilihan (kemungkinan CORS atau izin folder): '+err.message+'. Coba tanpa folder pilihan atau gunakan URL aset langsung.','err');return;}
+    const a=document.createElement('a');a.href=u;a.download=filename;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove();
+    status('Browser mencoba mengunduh '+filename+'. Jika server/CORS menolak unduhan langsung, buka URL aset dan simpan manual.','');
+  }
+}
+$('pickFolder').onclick=async()=>{
+  if(!window.showDirectoryPicker){status('Pemilihan folder langsung tidak didukung browser ini. Gunakan Chrome/Edge desktop terbaru; tanpa itu file tetap bisa diunduh ke folder Downloads default.','err');return;}
+  try{downloadRootHandle=await window.showDirectoryPicker({mode:'readwrite'});await downloadRootHandle.getDirectoryHandle('mp3',{create:true});await downloadRootHandle.getDirectoryHandle('gambar',{create:true});$('folderState').textContent='Folder tujuan aktif: '+(downloadRootHandle.name||'folder pilihan')+' / mp3 dan / gambar';status('Folder mp3 dan gambar berhasil disiapkan. Klik Download pada episode untuk menyimpan file bernomor.','ok');}
+  catch(err){if(err.name!=='AbortError')status('Tidak bisa memilih folder: '+err.message,'err');}
+};
 $('parseBtn').onclick=()=>{try{parse($('xmlInput').value)}catch(e){status(e.message,'err')}};
 $('fetchBtn').onclick=async()=>{const u=$('rssUrl').value.trim();if(!u)return status('Masukkan URL RSS dulu.','err');try{status('Mengambil RSS...');const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);$('xmlInput').value=await r.text();parse($('xmlInput').value)}catch(e){status('Gagal mengambil URL: '+e.message+'. Kemungkinan CORS. Download RSS XML lalu pilih file atau paste XML.','err')}};
 $('fileInput').onchange=async ev=>{const f=ev.target.files?.[0];if(!f)return;try{$('xmlInput').value=await f.text();parse($('xmlInput').value)}catch(e){status(e.message,'err')}};
@@ -108,7 +131,7 @@ $('clearBtn').onclick=()=>{episodes=[];$('xmlInput').value='';$('rssUrl').value=
 $('search').oninput=render;$('sort').onchange=render;
 $('showDone').onclick=()=>{showDone=!showDone;$('showDone').textContent=showDone?'Sembunyikan yang selesai':'Tampilkan yang disembunyikan';render()};
 $('clearDone').onclick=()=>{if(!confirm('Hapus semua tanda selesai? Episode yang ditandai akan muncul lagi.'))return;doneIds.clear();saveDone();showDone=false;$('showDone').textContent='Tampilkan yang disembunyikan';render();status('Semua tanda selesai direset.','ok')};
-$('episodeList').onclick=async ev=>{const b=ev.target.closest('button[data-act]');if(!b)return;const e=episodes.find(x=>x.index===+b.dataset.id);if(!e)return;const safe=(e.title||'episode').replace(/[\\/:*?"<>|]+/g,'_').slice(0,90);switch(b.dataset.act){case'title':return copy(e.title);case'desc':return copyDescription(e);case'both':return copy('<p>'+esc(e.title)+'</p>\n'+htmlSourceForCopy(e)).then(()=>status('Judul dan kode HTML deskripsi disalin.','ok'));case'audio':return download(e.audio,safe+'.mp3');case'image':return download(e.image,safe+'.jpg');case'done':doneIds.add(episodeKey(e));saveDone();render();status('Episode ditandai sudah disalin dan disembunyikan agar tidak terambil dua kali.','ok');return;case'toggle':{const d=$('desc-'+e.index),on=d.dataset.open==='1';d.dataset.open=on?'0':'1';d.classList.toggle('clamp',on);b.textContent=on?'Lihat deskripsi penuh':'Ringkas deskripsi';}}};
+$('episodeList').onclick=async ev=>{const b=ev.target.closest('button[data-act]');if(!b)return;const e=episodes.find(x=>x.index===+b.dataset.id);if(!e)return;const safe=(e.title||'episode').replace(/[\\/:*?"<>|]+/g,'_').slice(0,90);switch(b.dataset.act){case'title':return copy(e.title);case'desc':return copyDescription(e);case'both':return copy('<p>'+esc(e.title)+'</p>\n'+htmlSourceForCopy(e)).then(()=>status('Judul dan kode HTML deskripsi disalin.','ok'));case'audio':return download(e.audio,'mp3',e.index);case'image':return download(e.image,'gambar',e.index);case'done':doneIds.add(episodeKey(e));saveDone();render();status('Episode ditandai sudah disalin dan disembunyikan agar tidak terambil dua kali.','ok');return;case'toggle':{const d=$('desc-'+e.index),on=d.dataset.open==='1';d.dataset.open=on?'0':'1';d.classList.toggle('clamp',on);b.textContent=on?'Lihat deskripsi penuh':'Ringkas deskripsi';}}};
 $('copyVisible').onclick=()=>{const q=$('search').value.trim().toLowerCase(),list=episodes.filter(e=>!q||[e.title,e.desc,e.pubDate,e.audio,e.guid].join(' ').toLowerCase().includes(q));copy(list.map(e=>`${e.title}\n${e.audio||'(URL MP3 tidak ada)'}`).join('\n\n'))};
 $('exportBtn').onclick=()=>{const rows=[['title','descriptionPlainText','descriptionHTML','pubDate','audioUrl','imageUrl','guid','duration','mimeType','enclosureLength'],...episodes.map(e=>[e.title,e.desc,e.descHtml,e.pubDate,e.audio,e.image,e.guid,e.duration,e.mime,e.length])];const csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));a.download='rss-episodes.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
 })();
