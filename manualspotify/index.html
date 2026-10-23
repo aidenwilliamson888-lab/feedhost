@@ -12,7 +12,7 @@
 <div class="row" style="margin-top:10px"><button class="btn primary" id="parseBtn">Parse RSS XML</button><button class="btn" id="clearBtn">Reset</button><button class="btn cyan" id="exportBtn" disabled>Export CSV</button></div>
 <div id="status" class="status">Belum ada RSS yang diproses. Jika URL tidak bisa diambil karena CORS, download file RSS XML lalu pilih file atau paste isinya.</div></section>
 <div id="results" class="hidden"><div class="stats"><div class="stat"><strong id="countAll">0</strong><span>Total episode</span></div><div class="stat"><strong id="countMp3">0</strong><span>Punya URL audio</span></div><div class="stat"><strong id="countImage">0</strong><span>Punya gambar</span></div><div class="stat"><strong id="countDate">0</strong><span>Punya tanggal</span></div></div>
-<section class="panel"><h2>2. Daftar episode</h2><div class="tools"><span id="doneCount" class="sub">0 ditandai selesai</span><button class="btn" id="showDone">Tampilkan yang disembunyikan</button><button class="btn" id="clearDone">Reset tanda selesai</button><input id="search" class="search" type="search" placeholder="Cari judul, deskripsi, tanggal..."><select id="sort"><option value="newest">Tanggal: terbaru dulu</option><option value="oldest">Tanggal: terlama dulu</option><option value="rss">Urutan di RSS</option><option value="title">Judul A–Z</option></select><button class="btn" id="copyVisible">Copy judul + URL MP3</button></div><div class="row" style="margin:10px 0"><button class="btn primary" id="pickFolder">Pilih folder Downloads</button><span id="folderState" class="sub">Pilih folder Downloads sekali agar tool bisa membuat subfolder mp3 dan gambar, lalu menimpa file lama dengan nama tetap (Chrome/Edge desktop).</span></div><div class="sub">Jika folder tujuan dipilih, setiap download audio akan menimpa mp3/audio.mp3 dan setiap download cover akan menimpa gambar/cover.jpg. Pilih folder Downloads agar file lama bisa diganti otomatis. Tanpa izin folder, browser mengunduh ke Downloads default dan mungkin menambahkan angka pada nama file.</div><div id="episodeList"></div></section></div>
+<section class="panel"><h2>2. Daftar episode</h2><div class="tools"><span id="doneCount" class="sub">0 ditandai selesai</span><button class="btn" id="showDone">Tampilkan yang disembunyikan</button><button class="btn" id="clearDone">Reset tanda selesai</button><input id="search" class="search" type="search" placeholder="Cari judul, deskripsi, tanggal..."><select id="sort"><option value="newest">Tanggal: terbaru dulu</option><option value="oldest">Tanggal: terlama dulu</option><option value="rss">Urutan di RSS</option><option value="title">Judul A–Z</option></select><button class="btn" id="copyVisible">Copy judul + URL MP3</button></div><div class="row" style="margin:10px 0"><button class="btn primary" id="pickFolder">Pilih folder Downloads</button><span id="folderState" class="sub">Pilih folder Downloads sekali agar tool bisa membuat subfolder mp3 dan gambar, lalu menimpa file lama dengan nama tetap (Chrome/Edge desktop).</span></div><div class="row" style="margin:10px 0"><div><label class="sub" for="proxyUrl">URL Cloudflare Worker proxy (setelah deploy)</label><input id="proxyUrl" type="url" placeholder="https://nama-worker.username.workers.dev"></div></div><div class="sub">Setelah Worker proxy di-deploy, masukkan URL Worker di atas untuk mengatasi CORS. Jika folder tujuan dipilih, audio akan menimpa mp3/audio.mp3 dan cover menimpa gambar/cover.jpg. Tanpa proxy, sumber yang memblokir CORS tetap gagal diunduh.</div><div id="episodeList"></div></section></div>
 <footer>Diproses lokal di browser · Tidak mengunggah RSS ke server</footer></main>
 <script>
 (()=>{'use strict';const $=id=>document.getElementById(id);let episodes=[];let downloadRootHandle=null;
@@ -104,23 +104,30 @@ async function copyDescription(e){
 }
 async function download(u,kind,index){
   const isAudio=kind==='mp3', folderName=isAudio?'mp3':'gambar', filename=isAudio?'audio.mp3':'cover.jpg';
+  const proxyBase=$('proxyUrl').value.trim().replace(/\/+$/,'');
   status('Menyiapkan unduhan '+folderName+'/'+filename+'...');
   try{
-    // Use fetch only when the source permits CORS. A Blob URL lets the browser download
-    // with the exact filename and prevents MP3/image content from opening in a viewer tab.
-    const r=await fetch(u,{mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const blob=await r.blob();
+    let fetchUrl=u;
+    if(proxyBase){
+      const proxyUrl=new URL(proxyBase);
+      if(proxyUrl.protocol!=='https:')throw Error('URL Worker harus menggunakan HTTPS.');
+      fetchUrl=proxyBase+'/download?url='+encodeURIComponent(u)+'&kind='+(isAudio?'mp3':'cover');
+    }
+    const r=await fetch(fetchUrl,{mode:'cors'});
+    if(!r.ok){let detail='';try{detail=(await r.text()).slice(0,250)}catch(e){}throw Error('HTTP '+r.status+(detail?': '+detail:''));}
+    const blob=await r.blob();
+    if(!blob.size)throw Error('File kosong.');
     if(downloadRootHandle){
       const dir=await downloadRootHandle.getDirectoryHandle(folderName,{create:true});
       const file=await dir.getFileHandle(filename,{create:true});
       const writable=await file.createWritable();await writable.write(blob);await writable.close();
-      status('Berhasil disimpan / ditimpa: '+folderName+'/'+filename,'ok');return true;
+      status('Berhasil disimpan/ditimpa: '+folderName+'/'+filename,'ok');return true;
     }
     const objectUrl=URL.createObjectURL(blob),a=document.createElement('a');a.href=objectUrl;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),60000);
-    status('Unduhan dimulai: '+filename+'. Untuk menimpa file yang sama secara konsisten, gunakan tombol Pilih folder Downloads.','ok');return true;
+    status('Unduhan dimulai: '+filename+'. Pilih folder Downloads untuk menimpa file lama secara konsisten.','ok');return true;
   }catch(err){
-    // Do not open a new tab or navigate away from the tool. Cross-origin downloads cannot
-    // be forced from client-side HTML when the source blocks CORS; show a clear explanation.
-    status('Browser tidak bisa mengunduh '+filename+' otomatis karena server sumber menolak akses (CORS) atau file tidak tersedia. Tool sengaja tidak membuka tab baru. Coba URL aset dari tombol Buka, atau gunakan sumber/proxy yang mengizinkan CORS. Detail: '+err.message,'err');return false;
+    const hint=proxyBase?'Periksa URL Worker, deploy Worker, dan pastikan host sumber masuk allowlist.':'Deploy Cloudflare Worker proxy lalu masukkan URL-nya di kolom proxy untuk sumber yang memblokir CORS.';
+    status('Gagal mengunduh '+filename+'. '+hint+' Detail: '+err.message,'err');return false;
   }
 }
 $('pickFolder').onclick=async()=>{
