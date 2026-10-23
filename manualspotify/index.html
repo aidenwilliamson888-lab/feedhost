@@ -12,7 +12,7 @@
 <div class="row" style="margin-top:10px"><button class="btn primary" id="parseBtn">Parse RSS XML</button><button class="btn" id="clearBtn">Reset</button><button class="btn cyan" id="exportBtn" disabled>Export CSV</button></div>
 <div id="status" class="status">Belum ada RSS yang diproses. Jika URL tidak bisa diambil karena CORS, download file RSS XML lalu pilih file atau paste isinya.</div></section>
 <div id="results" class="hidden"><div class="stats"><div class="stat"><strong id="countAll">0</strong><span>Total episode</span></div><div class="stat"><strong id="countMp3">0</strong><span>Punya URL audio</span></div><div class="stat"><strong id="countImage">0</strong><span>Punya gambar</span></div><div class="stat"><strong id="countDate">0</strong><span>Punya tanggal</span></div></div>
-<section class="panel"><h2>2. Daftar episode</h2><div class="tools"><span id="doneCount" class="sub">0 ditandai selesai</span><button class="btn" id="showDone">Tampilkan yang disembunyikan</button><button class="btn" id="clearDone">Reset tanda selesai</button><input id="search" class="search" type="search" placeholder="Cari judul, deskripsi, tanggal..."><select id="sort"><option value="newest">Tanggal: terbaru dulu</option><option value="oldest">Tanggal: terlama dulu</option><option value="rss">Urutan di RSS</option><option value="title">Judul A–Z</option></select><button class="btn" id="copyVisible">Copy judul + URL MP3</button></div><div class="row" style="margin:10px 0"><button class="btn primary" id="pickFolder">Pilih folder Downloads</button><span id="folderState" class="sub">Pilih folder Downloads sekali agar tool bisa membuat subfolder mp3 dan gambar secara otomatis (Chrome/Edge desktop).</span></div><div class="sub">Jika folder tujuan dipilih, file disimpan ke mp3/1.mp3, mp3/2.mp3, dan gambar/1.jpg, gambar/2.jpg, mengikuti nomor episode di RSS. Jika tidak memilih folder, browser mengunduh file ke lokasi Downloads default.</div><div id="episodeList"></div></section></div>
+<section class="panel"><h2>2. Daftar episode</h2><div class="tools"><span id="doneCount" class="sub">0 ditandai selesai</span><button class="btn" id="showDone">Tampilkan yang disembunyikan</button><button class="btn" id="clearDone">Reset tanda selesai</button><input id="search" class="search" type="search" placeholder="Cari judul, deskripsi, tanggal..."><select id="sort"><option value="newest">Tanggal: terbaru dulu</option><option value="oldest">Tanggal: terlama dulu</option><option value="rss">Urutan di RSS</option><option value="title">Judul A–Z</option></select><button class="btn" id="copyVisible">Copy judul + URL MP3</button></div><div class="row" style="margin:10px 0"><button class="btn primary" id="pickFolder">Pilih folder Downloads</button><span id="folderState" class="sub">Pilih folder Downloads sekali agar tool bisa membuat subfolder mp3 dan gambar, lalu menimpa file lama dengan nama tetap (Chrome/Edge desktop).</span></div><div class="sub">Jika folder tujuan dipilih, setiap download audio akan menimpa mp3/audio.mp3 dan setiap download cover akan menimpa gambar/cover.jpg. Pilih folder Downloads agar file lama bisa diganti otomatis. Tanpa izin folder, browser mengunduh ke Downloads default dan mungkin menambahkan angka pada nama file.</div><div id="episodeList"></div></section></div>
 <footer>Diproses lokal di browser · Tidak mengunggah RSS ke server</footer></main>
 <script>
 (()=>{'use strict';const $=id=>document.getElementById(id);let episodes=[];let downloadRootHandle=null;
@@ -103,7 +103,7 @@ async function copyDescription(e){
   return ok;
 }
 async function download(u,kind,index){
-  const isAudio=kind==='mp3', folderName=isAudio?'mp3':'gambar', filename=`${index}.${isAudio?'mp3':'jpg'}`;
+  const isAudio=kind==='mp3', folderName=isAudio?'mp3':'gambar', filename=isAudio?'audio.mp3':'cover.jpg';
   status('Menyiapkan unduhan '+folderName+'/'+filename+'...');
   try{
     // Use fetch only when the source permits CORS. A Blob URL lets the browser download
@@ -113,10 +113,10 @@ async function download(u,kind,index){
       const dir=await downloadRootHandle.getDirectoryHandle(folderName,{create:true});
       const file=await dir.getFileHandle(filename,{create:true});
       const writable=await file.createWritable();await writable.write(blob);await writable.close();
-      status('Berhasil disimpan: '+folderName+'/'+filename,'ok');return true;
+      status('Berhasil disimpan / ditimpa: '+folderName+'/'+filename,'ok');return true;
     }
     const objectUrl=URL.createObjectURL(blob),a=document.createElement('a');a.href=objectUrl;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),60000);
-    status('Unduhan dimulai: '+filename,'ok');return true;
+    status('Unduhan dimulai: '+filename+'. Untuk menimpa file yang sama secara konsisten, gunakan tombol Pilih folder Downloads.','ok');return true;
   }catch(err){
     // Do not open a new tab or navigate away from the tool. Cross-origin downloads cannot
     // be forced from client-side HTML when the source blocks CORS; show a clear explanation.
@@ -125,7 +125,7 @@ async function download(u,kind,index){
 }
 $('pickFolder').onclick=async()=>{
   if(!window.showDirectoryPicker){status('Pemilihan folder langsung tidak didukung browser ini. Gunakan Chrome/Edge desktop terbaru; tanpa itu file tetap bisa diunduh ke folder Downloads default.','err');return;}
-  try{downloadRootHandle=await window.showDirectoryPicker({mode:'readwrite'});await downloadRootHandle.getDirectoryHandle('mp3',{create:true});await downloadRootHandle.getDirectoryHandle('gambar',{create:true});$('folderState').textContent='Folder tujuan aktif: '+(downloadRootHandle.name||'folder pilihan')+' / mp3 dan / gambar';status('Folder mp3 dan gambar berhasil disiapkan. Klik Download pada episode untuk menyimpan file bernomor.','ok');}
+  try{downloadRootHandle=await window.showDirectoryPicker({mode:'readwrite'});await downloadRootHandle.getDirectoryHandle('mp3',{create:true});await downloadRootHandle.getDirectoryHandle('gambar',{create:true});$('folderState').textContent='Folder tujuan aktif: '+(downloadRootHandle.name||'folder pilihan')+' / mp3/audio.mp3 dan / gambar/cover.jpg';status('Folder mp3 dan gambar siap. Download berikutnya akan menimpa audio.mp3 atau cover.jpg yang lama.','ok');}
   catch(err){if(err.name!=='AbortError')status('Tidak bisa memilih folder: '+err.message,'err');}
 };
 $('parseBtn').onclick=()=>{try{parse($('xmlInput').value)}catch(e){status(e.message,'err')}};
