@@ -102,14 +102,12 @@ async function copyDescription(e){
   if(ok)status('Kode HTML deskripsi disalin, termasuk tag paragraf, link, target, dan rel.','ok');
   return ok;
 }
-async function directDownload(u,filename){
-  // Cross-origin assets often cannot be fetched by page JavaScript. Try a normal browser download instead.
-  const a=document.createElement('a');a.href=u;a.download=filename;a.rel='noopener';a.target='_blank';document.body.appendChild(a);a.click();a.remove();
-}
 async function download(u,kind,index){
   const isAudio=kind==='mp3', folderName=isAudio?'mp3':'gambar', filename=`${index}.${isAudio?'mp3':'jpg'}`;
   status('Menyiapkan unduhan '+folderName+'/'+filename+'...');
   try{
+    // Use fetch only when the source permits CORS. A Blob URL lets the browser download
+    // with the exact filename and prevents MP3/image content from opening in a viewer tab.
     const r=await fetch(u,{mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const blob=await r.blob();
     if(downloadRootHandle){
       const dir=await downloadRootHandle.getDirectoryHandle(folderName,{create:true});
@@ -117,12 +115,12 @@ async function download(u,kind,index){
       const writable=await file.createWritable();await writable.write(blob);await writable.close();
       status('Berhasil disimpan: '+folderName+'/'+filename,'ok');return true;
     }
-    const objectUrl=URL.createObjectURL(blob),a=document.createElement('a');a.href=objectUrl;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),30000);
+    const objectUrl=URL.createObjectURL(blob),a=document.createElement('a');a.href=objectUrl;a.download=filename;a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),60000);
     status('Unduhan dimulai: '+filename,'ok');return true;
   }catch(err){
-    // If CORS blocks fetch, do not stop: trigger the source URL directly as a fallback.
-    try{await directDownload(u,filename);status('Browser mencoba mengunduh '+filename+' langsung dari sumber. Karena CORS memblokir akses file, browser mungkin tidak bisa menyimpannya ke subfolder '+folderName+'. Jika terbuka di tab baru, gunakan Ctrl+S atau klik kanan > Simpan sebagai.','');return false}
-    catch(fallbackErr){status('Download otomatis gagal: '+err.message+'. Buka URL aset dan simpan manual dengan nama '+filename+'.','err');return false}
+    // Do not open a new tab or navigate away from the tool. Cross-origin downloads cannot
+    // be forced from client-side HTML when the source blocks CORS; show a clear explanation.
+    status('Browser tidak bisa mengunduh '+filename+' otomatis karena server sumber menolak akses (CORS) atau file tidak tersedia. Tool sengaja tidak membuka tab baru. Coba URL aset dari tombol Buka, atau gunakan sumber/proxy yang mengizinkan CORS. Detail: '+err.message,'err');return false;
   }
 }
 $('pickFolder').onclick=async()=>{
